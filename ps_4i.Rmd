@@ -1,0 +1,169 @@
+---
+title: "PS 4i"
+author: "Antonio Scheffel Oliveira"
+date: "27/11/2022"
+output: html_document
+---
+
+## Questão 1
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+```
+
+Inicialmente, fazemos a leitura dos dados.
+
+```{r}
+path <- "~/../Downloads/" # inserir o caminho onde está o arquivo
+file <- paste0(path,"dados_desafiodatascientistintern_vendas_distribuidoras_anp.xlsx")
+
+# primeiramente lemos o consumo de diesel
+dados <- read_xlsx(file, sheet = "diesel")
+# pivoteamos o conjunto para criar a variável ano e a variável consumo e
+# criamos a variável combustível para auxiliar identificação futuramente
+
+dados <-
+dados %>% pivot_longer(cols = `2000`:`2020`, names_to = "ano", 
+                       values_to = "consumo") %>% 
+  mutate(combustivel = "diesel")
+
+# repetimos o processo para a gasolina 
+dados_aux <- read_xlsx(file, sheet = "gasolina") %>% 
+  pivot_longer(cols = `2000`:`2020`, names_to = "ano", 
+                       values_to = "consumo") %>% 
+  mutate(combustivel = "gasolina")
+
+# juntamos os dois conjuntos (como os nomes das variaveis são iguais,
+# podemos usar rbind)
+dados <-
+dados %>% rbind(dados_aux)
+
+# repetimos para o etanol
+dados_aux <- read_xlsx(file, sheet = "etanol") %>% 
+  pivot_longer(cols = `2000`:`2020`, names_to = "ano", 
+                       values_to = "consumo") %>% 
+  mutate(combustivel = "etanol")
+
+# juntamos todos conjuntos, mudamos os tipos das variaveis para que 
+# sejam coerentes e criamos a variável mes_ano para facilitar as analises
+dados <- dados %>% rbind(dados_aux) %>% 
+  transmute(regiao = as.factor(str_to_upper(regiao)), 
+            mes_ano = dmy(paste0(1,"-",meses,"-",ano)), 
+            ano = as.integer(ano), meses = as.integer(meses), 
+            combustivel = as.factor(combustivel), consumo) %>% 
+  arrange(mes_ano)
+# nesse conjunto não há NAs
+```
+
+Para avaliar a sazonalidade, usamos as funções de autocorrelação simples e parcial. Para isso, transformamos os dados e criamos a função para fazer os gráficos.
+
+```{r}
+dados_aux <- 
+  dados %>% group_by(regiao, combustivel) %>% 
+  summarize(lag = acf(consumo, plot = FALSE)$lag,
+            autocor = acf(consumo, plot = FALSE)$acf, 
+            p_autocor = c(1,pacf(consumo, plot = FALSE)$acf), 
+            .groups = "drop")
+
+plot_acf <- function(comb, autocf = TRUE){
+  # comb é o combustível de interesse e autocf indica se deve ser plotado
+  # um gráfico de acf (TRUE) ou pacf (FALSE)
+  tipo <- paste0("Autocorrelação", ifelse(autocf, "", " Parcial"))
+  
+  dados_aux %>% filter(combustivel == comb) %>% 
+  ggplot(aes(x = lag, y = if(autocf){autocor}else{p_autocor})) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_hline(aes(yintercept = -0.05),linetype = 2, color = "grey") +
+  geom_hline(aes(yintercept = 0.05),linetype = 2, color = "grey") +
+  geom_segment(aes(xend = lag, yend = 0)) +
+  facet_wrap(~regiao) +
+  labs(x = "Lag", y = tipo, subtitle = "Período 2000-2020",
+         title = paste(tipo, "no consumo de", comb)) +
+    theme_bw()
+}
+plot_acf(comb = "diesel", autocf = TRUE)
+```
+
+```{r}
+plot_acf(comb = "diesel", autocf = FALSE)
+```
+
+Para o consumo de diesel, observamos picos de autocorrelação no lag 12 no Brasil todo e nos estados, apesar de alguns picos serem mais brandos, indicando uma sazonalidade de 12 meses. O gráfico de autocorrelação parcial apenas corrobora um pouco com a sazonalidade de 12 meses para o Brasil e para os estados com um pico mais nítido.
+
+```{r}
+plot_acf(comb = "gasolina", autocf = TRUE)
+```
+
+```{r}
+plot_acf(comb = "gasolina", autocf = FALSE)
+```
+
+Para o consumo de diesel, não é nítida uma sazonalidade pelo gráfico de autocorrelação simples, mas no gráfico de autocorrelação parcial, observamos valores altos e significativos nos lags 12 e 13 no Brasil todo e nos estados, isso pode indicar que a sazonalidade de 12 meses é razoável.
+
+```{r}
+plot_acf(comb = "etanol", autocf = TRUE)
+```
+
+```{r}
+plot_acf(comb = "etanol", autocf = FALSE)
+```
+
+Para o etanol, podemos observar um comportamento de sazonalidade no lag 12 para alguns estados, como TO e DF, pela autocorrelação simples. Já para na autocorrelação parcial, é possível observar alguns valores maiores e signficativos perto do lag 12, porém parece arriscado afirmar, apenas com base em gráficos, que há uma sazonalidade de 12 meses em todos estados.
+
+```{r}
+dados %>% filter(regiao != "BR") %>% ggplot(aes(x = mes_ano, y = consumo)) + geom_line() + facet_wrap(~regiao*combustivel) + theme_bw() + 
+  labs(x = "Tempo", y = "Consumo", subtitle = "Período 2000-2020",
+     title = "Consumo de Combustível em cada estado") + theme_bw()
+```
+
+Esse gráfico inicial nos fornece uma noção acerca da magnitude dos consumos de combustível nos diferentes estados e com base nisso, realizamos gráficos, agrupando estados com consumos parecidos para melhor visualização.
+
+```{r}
+dados %>% filter(regiao %in% c("SP", "MG")) %>% ggplot(aes(x = mes_ano, y = consumo)) + geom_line() + facet_wrap(~regiao*combustivel) + 
+  labs(x = "Tempo", y = "Consumo", subtitle = "Período 2000-2020",
+     title = "Consumo de Combustível em SP e MG") + theme_bw()
+```
+
+Observamos um comportamento sazonal e levemente crescente do diesel em ambos estados, uma certa tendência de crescimento com uma sazonalidade no etanol. Já para a gasolina, observamos uma possível mudança de regime em 2010 em SP e uma leve tendência de crescimento em MG.
+
+```{r}
+dados %>% filter(regiao %in% c("MT", "GO", "PA")) %>% ggplot(aes(x = mes_ano, y = consumo)) + geom_line() + facet_wrap(~regiao*combustivel) + 
+  labs(x = "Tempo", y = "Consumo", subtitle = "Período 2000-2020",
+     title = "Consumo de Combustível em MT, GO e PA") + theme_bw()
+```
+
+Novamente, observamos a sazonalidade e a tendência de crescimento do diesel em todos estados, uma certa tendência de crescimento com uma sazonalidade no etanol, exceto em PA que apresenta estacionariedade. Já para a gasolina, observamos tendência de crescimento em MG, com uma possível sazonalidade mais branda.
+
+```{r}
+dados %>% filter(regiao %in% c("TO", "DF", "MA")) %>% ggplot(aes(x = mes_ano, y = consumo)) + geom_line() + facet_wrap(~regiao*combustivel) + 
+  labs(x = "Tempo", y = "Consumo", subtitle = "Período 2000-2020",
+     title = "Consumo de Combustível em TO e DF") + theme_bw()
+```
+
+O comportamento do diesel é o mesmo descrito para os outros estados, exceto para o DF, que apresenta uma estacionariedade com sazonalidade. Para o etanol, o comportamento parece estacionário com uma possível sazonalidade e para a gasolina, há um comportamento crescente com uma aparente sazonalidade.
+
+Considerando os valores dos combustíveis em dezembro de 2020: R\$3930 por $m^3$ de diesel, R\$4696 por $m^3$ de gasolina e R\$3157 por $m^3$ de etanol, o tamanho do mercado nesse mês é calculado como a soma dos produtos entre o consumo e o custo de cada combustível:
+
+```{r}
+dados %>% filter(mes_ano == dmy("01-12-2020"), regiao == "BR") %>% 
+  transmute(consumo, custo = c(3930, 4696, 3157)) %>% 
+  summarize(`Tamanho do Mercado` = sum(consumo*custo))
+```
+
+```{r}
+# está sendo considerado que os últimos 5 anos são do começo de 2016 até o final de 2020
+dados %>% filter(regiao == "BR", mes_ano >= dmy("01-01-2016")) %>% 
+  ggplot(aes(x = mes_ano, y = consumo)) + facet_wrap(~combustivel) +
+  geom_line()  + theme_bw() +
+  labs(x = "Tempo", y = "Consumo", subtitle = "Período 2016-2020",
+     title = "Consumo de Combustível no Brasil") + theme_bw()
+```
+
+
+O consumo de combustíveis não parece ter crescido entre o começo de 2016 e o final de 2020, exceto pelo etanol que parece apresentar uma tendência de crescimento, apesar de ser o combustível com menor consumo. Já o diesel apresenta de fato um comportamento de sazonalidade com um certo crescimento, como já destacado anteriormente. Por fim, a gasolina apresentava um comportamento levemente estacionário até haver uma queda no ínicio de 2020, possivelmente devido à pandemia. Observamos também que o começo da pandemia parece ter afetado o consumo de todos combustíveis, mas no caso do diesel, já era esperada uma queda naquele momento devido à sazonalidade da série.
+
+
+
